@@ -1,18 +1,18 @@
 {
-  "name": "github-mcp-remote-claude-proxy",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "vercel dev",
-    "build": "tsc",
-    "lint": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.7.0",
-    "vercel": "^41.0.0"
-  }
+    "name": "github-mcp-remote-claude-proxy",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "vdev": "vercel dev",
+        "build": "tsc",
+        "lint": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.12.1"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "typescript": "^5.7.0"
+    }
 }

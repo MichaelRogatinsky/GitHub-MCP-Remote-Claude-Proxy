@@ -1,4 +1,6 @@
 {
+  "buildCommand": false,
+  "outputDirectory": ".",
   "rewrites": [
     { "source": "/mcp", "destination": "/api/mcp" }
   ]
