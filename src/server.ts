@@ -76,5 +76,61 @@ export function createServer() {
     }
   );
 
+  server.tool(
+    "list_directory",
+    "List the contents of a directory in a GitHub repository",
+    {
+      owner: z.string().describe("Repository owner (user or org)"),
+      repo: z.string().describe("Repository name"),
+      path: z
+        .string()
+        .optional()
+        .describe("Directory path within the repo (default: root)"),
+      ref: z
+        .string()
+        .optional()
+        .describe("Branch, tag, or commit SHA (default: repo's default branch)"),
+    },
+    async ({ owner, repo, path, ref }) => {
+      const apiPath = `/repos/${owner}/${repo}/contents/${path ?? ""}`;
+      const params = new URLSearchParams();
+      if (ref) params.set("ref", ref);
+      const qs = params.toString();
+      const url = qs ? `${apiPath}?${qs}` : apiPath;
+
+      const data = await githubGet(url);
+
+      // GitHub returns an array for directories, a single object for files.
+      if (!Array.isArray(data)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Path points to a file, not a directory: ${data.name} (${data.size} bytes)`,
+            },
+          ],
+        };
+      }
+
+      const entries = data.map(
+        (e: { name: string; type: string; size: number; path: string }) => ({
+          name: e.name,
+          type: e.type, // "file", "dir", or "submodule"
+          size: e.size,
+          path: e.path,
+        })
+      );
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(entries, null, 2),
+          },
+        ],
+      };
+    }
+  );
+
   return server;
 }
