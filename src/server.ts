@@ -132,5 +132,76 @@ export function createServer() {
     }
   );
 
+  server.tool(
+    "read_file",
+    "Read the contents of a file in a GitHub repository, optionally returning only a specific line range",
+    {
+      owner: z.string().describe("Repository owner (user or org)"),
+      repo: z.string().describe("Repository name"),
+      path: z.string().describe("File path within the repo"),
+      ref: z
+        .string()
+        .optional()
+        .describe("Branch, tag, or commit SHA (default: repo's default branch)"),
+      start_line: z
+        .number()
+        .min(1)
+        .optional()
+        .describe("First line to return (1-based, inclusive)"),
+      end_line: z
+        .number()
+        .min(1)
+        .optional()
+        .describe("Last line to return (1-based, inclusive)"),
+    },
+    async ({ owner, repo, path, ref, start_line, end_line }) => {
+      const apiPath = `/repos/${owner}/${repo}/contents/${path}`;
+      const params = new URLSearchParams();
+      if (ref) params.set("ref", ref);
+      const qs = params.toString();
+      const url = qs ? `${apiPath}?${qs}` : apiPath;
+
+      const data = await githubGet(url);
+
+      if (data.type !== "file" || !data.content) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Path is not a file (type: ${data.type})`,
+            },
+          ],
+        };
+      }
+
+      const decoded = Buffer.from(data.content, "base64").toString("utf-8");
+      let lines = decoded.split("\n");
+
+      const totalLines = lines.length;
+      if (start_line || end_line) {
+        const start = (start_line ?? 1) - 1;
+        const end = end_line ?? totalLines;
+        lines = lines.slice(start, end);
+      }
+
+      // Add line numbers
+      const startNum = start_line ?? 1;
+      const numbered = lines
+        .map((line, i) => `${startNum + i}\t${line}`)
+        .join("\n");
+
+      const header = `File: ${data.path} (${totalLines} lines total)`;
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${header}\n\n${numbered}`,
+          },
+        ],
+      };
+    }
+  );
+
   return server;
 }
