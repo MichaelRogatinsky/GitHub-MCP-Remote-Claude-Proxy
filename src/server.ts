@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { githubGet } from "./github.js";
+import { githubGet, githubRequest } from "./github.js";
 
 export function createServer() {
   const server = new McpServer({
@@ -197,6 +197,181 @@ export function createServer() {
           {
             type: "text" as const,
             text: `${header}\n\n${numbered}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "create_or_update_file",
+    "Create or update a single file in a GitHub repository",
+    {
+      owner: z.string().describe("Repository owner (user or org)"),
+      repo: z.string().describe("Repository name"),
+      path: z.string().describe("File path within the repo"),
+      content: z.string().describe("The new file content (plain text, will be base64-encoded automatically)"),
+      message: z.string().describe("Commit message"),
+      branch: z
+        .string()
+        .optional()
+        .describe("Branch to commit to (default: repo's default branch)"),
+      sha: z
+        .string()
+        .optional()
+        .describe(
+          "SHA of the file being replaced (required for updates, omit for new files). " +
+          "If not provided for an existing file, the tool will fetch it automatically."
+        ),
+    },
+    async ({ owner, repo, path, content, message, branch, sha }) => {
+      // If no sha provided, try to fetch the existing file to get it.
+      // This makes updates seamless — callers don't need to track SHAs.
+      let fileSha = sha;
+      if (!fileSha) {
+        try {
+          const params = new URLSearchParams();
+          if (branch) params.set("ref", branch);
+          const qs = params.toString();
+          const apiPath = `/repos/${owner}/${repo}/contents/${path}`;
+          const existing = await githubGet(qs ? `${apiPath}?${qs}` : apiPath);
+          if (existing.sha) {
+            fileSha = existing.sha;
+          }
+        } catch {
+          // File doesn't exist yet — this is a create, no sha needed.
+        }
+      }
+
+      const body: Record<string, string> = {
+        message,
+        content: Buffer.from(content).toString("base64"),
+      };
+      if (branch) body.branch = branch;
+      if (fileSha) body.sha = fileSha;
+
+      const result = await githubRequest(
+        "PUT",
+        `/repos/${owner}/${repo}/contents/${path}`,
+        body
+      );
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                path: result.content.path,
+                sha: result.content.sha,
+                commit_sha: result.commit.sha,
+                commit_message: result.commit.message,
+                html_url: result.content.html_url,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "patch_file",
+    "Apply search-and-replace edits to an existing file in a GitHub repository. " +
+      "Each edit replaces the first occurrence of old_text with new_text. " +
+      "Edits are applied sequentially, so later edits see the result of earlier ones.",
+    {
+      owner: z.string().describe("Repository owner (user or org)"),
+      repo: z.string().describe("Repository name"),
+      path: z.string().describe("File path within the repo"),
+      edits: z
+        .array(
+          z.object({
+            old_text: z.string().describe("Exact text to find in the file"),
+            new_text: z.string().describe("Text to replace it with"),
+          })
+        )
+        .min(1)
+        .describe("List of search-and-replace edits to apply in order"),
+      message: z.string().describe("Commit message"),
+      branch: z
+        .string()
+        .optional()
+        .describe("Branch to commit to (default: repo's default branch)"),
+    },
+    async ({ owner, repo, path, edits, message, branch }) => {
+      // Fetch the current file
+      const params = new URLSearchParams();
+      if (branch) params.set("ref", branch);
+      const qs = params.toString();
+      const apiPath = `/repos/${owner}/${repo}/contents/${path}`;
+      const existing = await githubGet(qs ? `${apiPath}?${qs}` : apiPath);
+
+      if (existing.type !== "file" || !existing.content) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Path is not a file (type: ${existing.type})`,
+            },
+          ],
+        };
+      }
+
+      let content = Buffer.from(existing.content, "base64").toString("utf-8");
+
+      // Apply edits sequentially
+      const failed: string[] = [];
+      for (const edit of edits) {
+        if (!content.includes(edit.old_text)) {
+          failed.push(edit.old_text);
+          continue;
+        }
+        content = content.replace(edit.old_text, edit.new_text);
+      }
+
+      if (failed.length > 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text:
+                `${failed.length} edit(s) failed — old_text not found in file:\n\n` +
+                failed.map((t) => `  "${t.length > 80 ? t.slice(0, 80) + "…" : t}"`).join("\n"),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Commit the updated file
+      const body: Record<string, string> = {
+        message,
+        content: Buffer.from(content).toString("base64"),
+        sha: existing.sha,
+      };
+      if (branch) body.branch = branch;
+
+      const result = await githubRequest("PUT", apiPath, body);
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                path: result.content.path,
+                sha: result.content.sha,
+                commit_sha: result.commit.sha,
+                commit_message: result.commit.message,
+                edits_applied: edits.length,
+                html_url: result.content.html_url,
+              },
+              null,
+              2
+            ),
           },
         ],
       };
