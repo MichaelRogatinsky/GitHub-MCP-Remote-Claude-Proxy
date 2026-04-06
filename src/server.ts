@@ -446,5 +446,70 @@ export function createServer() {
         },
     );
 
+    server.registerTool(
+        "delete_file",
+        {
+            description: "Delete a file from a GitHub repository",
+            inputSchema: {
+                owner: z.string().describe("Repository owner (user or org)"),
+                repo: z.string().describe("Repository name"),
+                path: z.string().describe("File path within the repo"),
+                message: z.string().describe("Commit message"),
+                branch: z
+                    .string()
+                    .optional()
+                    .describe(
+                        "Branch to commit to (default: repo's default branch)",
+                    ),
+                sha: z
+                    .string()
+                    .optional()
+                    .describe(
+                        "SHA of the file to delete (fetched automatically if omitted)",
+                    ),
+            },
+            annotations: {
+                readOnlyHint: false,
+            },
+        },
+        async ({ owner, repo, path, message, branch, sha }) => {
+            let fileSha = sha;
+            if (!fileSha) {
+                const params = new URLSearchParams();
+                if (branch) params.set("ref", branch);
+                const qs = params.toString();
+                const apiPath = `/repos/${owner}/${repo}/contents/${path}`;
+                const existing = await githubGet(qs ? `${apiPath}?${qs}` : apiPath);
+                fileSha = existing.sha;
+            }
+
+            const body: Record<string, string> = { message, sha: fileSha! };
+            if (branch) body.branch = branch;
+
+            const result = await githubRequest(
+                "DELETE",
+                `/repos/${owner}/${repo}/contents/${path}`,
+                body,
+            );
+
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: JSON.stringify(
+                            {
+                                path,
+                                commit_sha: result.commit.sha,
+                                commit_message: result.commit.message,
+                            },
+                            null,
+                            2,
+                        ),
+                    },
+                ],
+            };
+        },
+    );
+
     return server;
 }
